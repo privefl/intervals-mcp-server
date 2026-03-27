@@ -4,10 +4,14 @@ Activity-related MCP tools for Intervals.icu.
 This module contains tools for retrieving and managing athlete activities.
 """
 
+import gzip
+import io
 from datetime import datetime, timedelta
 from typing import Any
 
-from intervals_mcp_server.api.client import make_intervals_request
+import fitdecode
+
+from intervals_mcp_server.api.client import _get_httpx_client, _prepare_request_config, make_intervals_request
 from intervals_mcp_server.config import get_config
 from intervals_mcp_server.utils.formatting import format_activity_summary, format_intervals
 from intervals_mcp_server.utils.validation import resolve_athlete_id, resolve_date_params
@@ -317,3 +321,60 @@ async def get_activity_streams(
         streams_summary += "\n"
 
     return streams_summary
+
+
+@mcp.tool()
+async def get_activity_file(activity_id: str, api_key: str | None = None) -> str:
+    """Get and parse laps from the FIT file of a specific activity from Intervals.icu
+
+    Downloads the raw FIT file, decompresses it if needed, and returns parsed lap data.
+
+    Args:
+        activity_id: The Intervals.icu activity ID
+        api_key: The Intervals.icu API key (optional, will use API_KEY from .env if not provided)
+    """
+    full_url, auth, headers, error_msg = _prepare_request_config(
+        f"/activity/{activity_id}/file", api_key, "GET"
+    )
+    if error_msg:
+        return f"Error: {error_msg}"
+
+    headers["Accept"] = "*/*"
+
+    try:
+        client = await _get_httpx_client()
+        response = await client.get(full_url, headers=headers, auth=auth, timeout=30.0)
+        response.raise_for_status()
+    except Exception as e:
+        return f"Error fetching activity file: {e}"
+
+    data = response.content
+
+    if data[:2] == b"\x1f\x8b":
+        data = gzip.decompress(data)
+
+    laps = []
+    try:
+        with fitdecode.FitReader(io.BytesIO(data)) as fit:
+            for frame in fit:
+                if isinstance(frame, fitdecode.FitDataMessage) and frame.name == "lap":
+                    lap = {
+                        field.name: field.value
+                        for field in frame.fields
+                        if field.value is not None
+                    }
+                    laps.append(lap)
+    except Exception as e:
+        return f"Error parsing FIT file: {e}"
+
+    if not laps:
+        return f"No lap data found in FIT file for activity {activity_id}."
+
+    result = f"Laps for activity {activity_id} ({len(laps)} laps):\n\n"
+    for i, lap in enumerate(laps, 1):
+        result += f"Lap {i}:\n"
+        for key, value in lap.items():
+            result += f"  {key}: {value}\n"
+        result += "\n"
+
+    return result
