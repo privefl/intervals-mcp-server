@@ -242,6 +242,7 @@ async def get_activity_intervals(activity_id: str, api_key: str | None = None) -
 @mcp.tool()
 async def get_activity_streams(
     activity_id: str,
+    athlete_id: str | None = None,
     api_key: str | None = None,
     stream_types: str | None = None,
 ) -> str:
@@ -252,6 +253,7 @@ async def get_activity_streams(
 
     Args:
         activity_id: The Intervals.icu activity ID
+        athlete_id: The Intervals.icu athlete ID (optional, informational — activity IDs are globally unique)
         api_key: The Intervals.icu API key (optional, will use API_KEY from .env if not provided)
         stream_types: Comma-separated list of stream types to retrieve (optional, defaults to all available types)
                      Available types: time, watts, heartrate, cadence, altitude, distance,

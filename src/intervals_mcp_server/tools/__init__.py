@@ -22,6 +22,7 @@ from intervals_mcp_server.tools.events import (  # noqa: F401
     get_events,
 )
 from intervals_mcp_server.tools.wellness import get_wellness_data  # noqa: F401
+from intervals_mcp_server.tools.athletes import get_coached_athletes  # noqa: F401
 
 
 def register_tools(mcp_instance: FastMCP) -> None:
@@ -42,6 +43,7 @@ def register_tools(mcp_instance: FastMCP) -> None:
 
 __all__ = [
     "register_tools",
+    "get_coached_athletes",
     "get_activities",
     "get_activity_details",
     "get_activity_intervals",
