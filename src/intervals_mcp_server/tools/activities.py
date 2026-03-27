@@ -324,13 +324,21 @@ async def get_activity_streams(
 
 
 @mcp.tool()
-async def get_activity_file(activity_id: str, api_key: str | None = None) -> str:
-    """Get and parse laps from the FIT file of a specific activity from Intervals.icu
+async def get_activity_file(
+    activity_id: str,
+    athlete_id: str | None = None,
+    data_types: str | None = None,
+    api_key: str | None = None,
+) -> str:
+    """Get and parse data from the FIT file of a specific activity from Intervals.icu
 
-    Downloads the raw FIT file, decompresses it if needed, and returns parsed lap data.
+    Downloads the raw FIT file, decompresses it if needed, and returns parsed data.
 
     Args:
         activity_id: The Intervals.icu activity ID
+        athlete_id: The Intervals.icu athlete ID (optional, informational — activity IDs are globally unique)
+        data_types: Comma-separated list of data types to extract (optional, defaults to all).
+                   Available types: laps, records, session
         api_key: The Intervals.icu API key (optional, will use API_KEY from .env if not provided)
     """
     full_url, auth, headers, error_msg = _prepare_request_config(
@@ -348,33 +356,57 @@ async def get_activity_file(activity_id: str, api_key: str | None = None) -> str
     except Exception as e:
         return f"Error fetching activity file: {e}"
 
-    data = response.content
+    raw = response.content
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
 
-    if data[:2] == b"\x1f\x8b":
-        data = gzip.decompress(data)
+    requested = (
+        {t.strip().lower() for t in data_types.split(",")}
+        if data_types
+        else {"laps", "records", "session"}
+    )
 
-    laps = []
+    laps: list[dict] = []
+    records: list[dict] = []
+    sessions: list[dict] = []
+
     try:
-        with fitdecode.FitReader(io.BytesIO(data)) as fit:
+        with fitdecode.FitReader(io.BytesIO(raw)) as fit:
             for frame in fit:
-                if isinstance(frame, fitdecode.FitDataMessage) and frame.name == "lap":
-                    lap = {
-                        field.name: field.value
-                        for field in frame.fields
-                        if field.value is not None
-                    }
-                    laps.append(lap)
+                if not isinstance(frame, fitdecode.FitDataMessage):
+                    continue
+                fields = {f.name: f.value for f in frame.fields if f.value is not None}
+                if frame.name == "lap" and "laps" in requested:
+                    laps.append(fields)
+                elif frame.name == "record" and "records" in requested:
+                    records.append(fields)
+                elif frame.name == "session" and "session" in requested:
+                    sessions.append(fields)
     except Exception as e:
         return f"Error parsing FIT file: {e}"
 
-    if not laps:
-        return f"No lap data found in FIT file for activity {activity_id}."
+    if not laps and not records and not sessions:
+        return f"No data found in FIT file for activity {activity_id} (types: {', '.join(sorted(requested))})."
 
-    result = f"Laps for activity {activity_id} ({len(laps)} laps):\n\n"
-    for i, lap in enumerate(laps, 1):
-        result += f"Lap {i}:\n"
-        for key, value in lap.items():
+    result = f"FIT file data for activity {activity_id}:\n\n"
+
+    if sessions:
+        result += "Session summary:\n"
+        for key, value in sessions[0].items():
             result += f"  {key}: {value}\n"
         result += "\n"
+
+    if laps:
+        result += f"Laps ({len(laps)}):\n\n"
+        for i, lap in enumerate(laps, 1):
+            result += f"  Lap {i}:\n"
+            for key, value in lap.items():
+                result += f"    {key}: {value}\n"
+            result += "\n"
+
+    if records:
+        result += f"Records ({len(records)} data points):\n"
+        for i, rec in enumerate(records, 1):
+            result += f"  Record #{i}: {rec}\n"
 
     return result

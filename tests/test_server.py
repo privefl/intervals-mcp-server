@@ -22,9 +22,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("API_KEY", "test")
 os.environ.setdefault("ATHLETE_ID", "i1")
 
+from unittest.mock import AsyncMock, MagicMock
+
 from intervals_mcp_server.server import (  # pylint: disable=wrong-import-position
     get_activities,
     get_activity_details,
+    get_activity_file,
     get_events,
     get_event_by_id,
     get_wellness_data,
@@ -437,3 +440,172 @@ def test_create_custom_item_with_invalid_json_content(monkeypatch):
         )
     )
     assert "Error: content must be valid JSON when passed as a string." in result
+
+
+def _make_fit_field(fitdecode_module, name, value):
+    field = MagicMock(spec=fitdecode_module.types.FieldData)
+    field.name = name
+    field.value = value
+    return field
+
+
+def _make_fit_frame(fitdecode_module, frame_name, fields):
+    frame = MagicMock(spec=fitdecode_module.FitDataMessage)
+    frame.name = frame_name
+    frame.fields = fields
+    return frame
+
+
+def _mock_fit_reader(monkeypatch, frames):
+    mock_reader = MagicMock()
+    mock_reader.__enter__ = MagicMock(return_value=iter(frames))
+    mock_reader.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr(
+        "intervals_mcp_server.tools.activities.fitdecode.FitReader", lambda _: mock_reader
+    )
+
+
+def _mock_http_client(monkeypatch, content=b"FIT_BINARY_DATA"):
+    fake_response = MagicMock()
+    fake_response.content = content
+    fake_response.raise_for_status = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=fake_response)
+    monkeypatch.setattr(
+        "intervals_mcp_server.tools.activities._get_httpx_client",
+        AsyncMock(return_value=mock_client),
+    )
+
+
+def test_get_activity_file_laps(monkeypatch):
+    """Test get_activity_file returns parsed lap data."""
+    import fitdecode
+
+    fields = [
+        _make_fit_field(fitdecode, "total_elapsed_time", 3600.0),
+        _make_fit_field(fitdecode, "total_distance", 10000.0),
+    ]
+    _mock_fit_reader(monkeypatch, [_make_fit_frame(fitdecode, "lap", fields)])
+    _mock_http_client(monkeypatch)
+
+    result = asyncio.run(get_activity_file("A123456", data_types="laps"))
+
+    assert "FIT file data for activity A123456" in result
+    assert "Laps (1)" in result
+    assert "total_elapsed_time" in result
+    assert "3600.0" in result
+    assert "total_distance" in result
+    assert "10000.0" in result
+
+
+def test_get_activity_file_session(monkeypatch):
+    """Test get_activity_file returns session summary."""
+    import fitdecode
+
+    fields = [
+        _make_fit_field(fitdecode, "total_elapsed_time", 7200.0),
+        _make_fit_field(fitdecode, "total_distance", 42000.0),
+        _make_fit_field(fitdecode, "avg_heart_rate", 145),
+    ]
+    _mock_fit_reader(monkeypatch, [_make_fit_frame(fitdecode, "session", fields)])
+    _mock_http_client(monkeypatch)
+
+    result = asyncio.run(get_activity_file("A123456", data_types="session"))
+
+    assert "Session summary" in result
+    assert "total_elapsed_time" in result
+    assert "7200.0" in result
+    assert "avg_heart_rate" in result
+    assert "145" in result
+
+
+def test_get_activity_file_records(monkeypatch):
+    """Test get_activity_file returns record data points."""
+    import fitdecode
+
+    frames = [
+        _make_fit_frame(fitdecode, "record", [
+            _make_fit_field(fitdecode, "heart_rate", 140 + i),
+            _make_fit_field(fitdecode, "power", 200 + i),
+        ])
+        for i in range(3)
+    ]
+    _mock_fit_reader(monkeypatch, frames)
+    _mock_http_client(monkeypatch)
+
+    result = asyncio.run(get_activity_file("A123456", data_types="records"))
+
+    assert "Records (3 data points)" in result
+    assert "heart_rate" in result
+    assert "power" in result
+
+
+def test_get_activity_file_all_types(monkeypatch):
+    """Test get_activity_file returns all data types when none specified."""
+    import fitdecode
+
+    session_frame = _make_fit_frame(fitdecode, "session", [
+        _make_fit_field(fitdecode, "total_distance", 42000.0),
+    ])
+    lap_frame = _make_fit_frame(fitdecode, "lap", [
+        _make_fit_field(fitdecode, "total_elapsed_time", 3600.0),
+    ])
+    record_frame = _make_fit_frame(fitdecode, "record", [
+        _make_fit_field(fitdecode, "heart_rate", 150),
+    ])
+    _mock_fit_reader(monkeypatch, [session_frame, lap_frame, record_frame])
+    _mock_http_client(monkeypatch)
+
+    result = asyncio.run(get_activity_file("A123456"))
+
+    assert "Session summary" in result
+    assert "Laps (1)" in result
+    assert "Records (1 data points)" in result
+
+
+def test_get_activity_file(monkeypatch):
+    """
+    Test get_activity_file returns parsed lap data from a FIT file response.
+    """
+    import fitdecode
+
+    # Build fake FIT field and message objects
+    fake_field_elapsed = MagicMock(spec=fitdecode.types.FieldData)
+    fake_field_elapsed.name = "total_elapsed_time"
+    fake_field_elapsed.value = 3600.0
+
+    fake_field_distance = MagicMock(spec=fitdecode.types.FieldData)
+    fake_field_distance.name = "total_distance"
+    fake_field_distance.value = 10000.0
+
+    fake_lap = MagicMock(spec=fitdecode.FitDataMessage)
+    fake_lap.name = "lap"
+    fake_lap.fields = [fake_field_elapsed, fake_field_distance]
+
+    # Mock FitReader as a context manager yielding one lap frame
+    mock_reader = MagicMock()
+    mock_reader.__enter__ = MagicMock(return_value=iter([fake_lap]))
+    mock_reader.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr("intervals_mcp_server.tools.activities.fitdecode.FitReader", lambda _: mock_reader)
+
+    # Mock httpx client returning raw bytes (not gzip-compressed)
+    fake_response = MagicMock()
+    fake_response.content = b"FIT_BINARY_DATA"
+    fake_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=fake_response)
+
+    monkeypatch.setattr(
+        "intervals_mcp_server.tools.activities._get_httpx_client",
+        AsyncMock(return_value=mock_client),
+    )
+
+    result = asyncio.run(get_activity_file("A123456", data_types="laps"))
+
+    assert "FIT file data for activity A123456" in result
+    assert "Laps (1)" in result
+    assert "total_elapsed_time" in result
+    assert "3600.0" in result
+    assert "total_distance" in result
+    assert "10000.0" in result
