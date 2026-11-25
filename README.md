@@ -168,6 +168,8 @@ Once the server is running and Claude Desktop is configured, you can use the fol
 - `get_wellness_data`: Fetch wellness data
 - `get_events`: Retrieve upcoming events (workouts, races, etc.)
 - `get_event_by_id`: Get detailed information for a specific event
+- `get_coached_athletes`: List coached athletes with recent activity counts and fitness
+- `find_race_candidates`: Find coached athletes' runs that look like races (round start time, no stops, pace well above usual, threshold heart rate, official distance, warm-up before, club mates at the same start), to check and record their times
 
 ## Usage with ChatGPT
 

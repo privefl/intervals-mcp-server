@@ -77,6 +77,7 @@ from intervals_mcp_server.tools.events import (  # pylint: disable=wrong-import-
 )
 from intervals_mcp_server.tools.wellness import get_wellness_data  # pylint: disable=wrong-import-position  # noqa: E402
 from intervals_mcp_server.tools.athletes import get_coached_athletes  # pylint: disable=wrong-import-position  # noqa: E402
+from intervals_mcp_server.tools.races import find_race_candidates  # pylint: disable=wrong-import-position  # noqa: E402
 from intervals_mcp_server.tools.custom_items import (  # pylint: disable=wrong-import-position  # noqa: E402
     create_custom_item,
     delete_custom_item,
@@ -91,6 +92,7 @@ __all__ = [
     "make_intervals_request",
     "httpx_client",  # Re-exported for test compatibility
     "get_coached_athletes",
+    "find_race_candidates",
     "get_activities",
     "get_activity_details",
     "get_activity_intervals",

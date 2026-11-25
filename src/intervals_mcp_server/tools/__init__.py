@@ -35,6 +35,7 @@ def register_tools(mcp_instance: FastMCP) -> None:
     )
     from intervals_mcp_server.tools.wellness import get_wellness_data  # noqa: F401
     from intervals_mcp_server.tools.athletes import get_coached_athletes  # noqa: F401
+    from intervals_mcp_server.tools.races import find_race_candidates  # noqa: F401
 
 
 __all__ = [
