@@ -14,6 +14,8 @@ from intervals_mcp_server.mcp_instance import mcp  # noqa: F401
 
 MAX_PARALLEL_REQUESTS = 4
 LAST_ACTIVITY_LOOKBACK_DAYS = 3 * 365
+DORMANT_AFTER_DAYS = 90  # free accounts are paused after 90 days without a visit
+WARN_AFTER_DAYS = 60
 
 
 async def _sync_status(aid: str, api_key: str | None, limiter: asyncio.Semaphore) -> str:
@@ -39,12 +41,20 @@ async def _sync_status(aid: str, api_key: str | None, limiter: asyncio.Semaphore
     if isinstance(latest, list) and latest:
         last_activity = (latest[0].get("start_date_local") or "?")[:10]
     status = profile.get("status") or "?"
+    permission = profile.get("icu_permission") or "?"
+    last_seen = (profile.get("icu_last_seen") or "")[:10]
     text = (
-        f" | last activity {last_activity} | last visit {(profile.get('icu_last_seen') or 'never')[:10]}"
-        f" | coach {profile.get('icu_permission') or '?'} | {status}"
+        f" | last activity {last_activity} | last visit {last_seen or 'never'}"
+        f" | coach {permission} | {status}"
     )
     if status == "DORMANT":
         text += " (sync paused: the athlete must log in again, then reconnect Garmin if needed)"
+    elif status == "ACTIVE" and permission != "WRITE" and last_seen:
+        days_since = (today - date.fromisoformat(last_seen)).days
+        if days_since >= WARN_AFTER_DAYS:
+            left = DORMANT_AFTER_DAYS - days_since
+            when = f"in about {left} days" if left > 0 else "any day now"
+            text += f" (dormant {when}: the athlete should log in to intervals.icu)"
     return text
 
 
@@ -60,8 +70,10 @@ async def get_coached_athletes(
 
     With check_sync, each athlete also shows their last synced activity, last visit to
     Intervals.icu, the coach's permission (READ or WRITE) and the account status.
-    Free accounts become DORMANT about 3 months after the athlete's last visit and stop
-    syncing new activities; athletes giving the coach WRITE permission stayed ACTIVE.
+    Free accounts become DORMANT 90 days after the athlete's last visit and stop syncing new
+    activities; athletes giving the coach WRITE permission stayed ACTIVE. Athletes on READ
+    permission with no visit for 60 days or more get a warning before that happens.
+    The coach's API reads do not count as the athlete's visit.
     A long gap in activities can therefore be a paused sync rather than an injury.
 
     Args:
@@ -105,9 +117,12 @@ async def get_coached_athletes(
     lines = [f"Coached Athletes ({len(par_athlete)} total)"]
     if semaines:
         lines[0] += " | activities per week starting " + ", ".join(semaines)
-    dormant = sum("DORMANT" in s for s in sync.values())
+    dormant = sum("| DORMANT" in s for s in sync.values())
+    soon = sum("(dormant " in s for s in sync.values())
     if dormant:
         lines[0] += f" | {dormant} DORMANT (sync paused)"
+    if soon:
+        lines[0] += f" | {soon} soon dormant"
     lines[0] += ":\n"
     for aid, rows in ordered:
         rows.sort(key=lambda a: a.get("date", ""), reverse=True)
