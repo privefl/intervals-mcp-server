@@ -41,26 +41,32 @@ async def get_coached_athletes(
     if not athletes:
         return "No coached athletes found."
 
-    lines = [f"Coached Athletes ({len(athletes)} total):\n"]
+    # athlete-summary renvoie une ligne par athlète ET par semaine (champ `date`,
+    # lundi de la semaine), avec athlete_id / athlete_name (pas id / name).
+    par_athlete: dict[str, list[dict]] = {}
     for athlete in athletes:
-        if not isinstance(athlete, dict):
-            continue
-        athlete_id = athlete.get("id", "N/A")
-        name = athlete.get("name") or athlete.get("firstname", "") + " " + athlete.get("lastname", "")
-        name = name.strip() or "Unknown"
-        sex = athlete.get("sex", "")
-        city = athlete.get("city", "")
-        country = athlete.get("country", "")
-        sport = athlete.get("defaultSport", athlete.get("sport", ""))
+        if isinstance(athlete, dict):
+            aid = athlete.get("athlete_id") or athlete.get("id") or "N/A"
+            par_athlete.setdefault(aid, []).append(athlete)
+    semaines = sorted({a.get("date", "") for rows in par_athlete.values() for a in rows},
+                      reverse=True)
 
-        line = f"- [{athlete_id}] {name}"
-        if sport:
-            line += f" | {sport}"
-        if sex:
-            line += f" | {sex}"
-        if city or country:
-            location = ", ".join(filter(None, [city, country]))
-            line += f" | {location}"
+    lines = [f"Coached Athletes ({len(par_athlete)} total)"]
+    if semaines:
+        lines[0] += " | activities per week starting " + ", ".join(semaines)
+    lines[0] += ":\n"
+    for aid, rows in sorted(par_athlete.items(),
+                            key=lambda kv: (kv[1][0].get("athlete_name") or "").lower()):
+        rows.sort(key=lambda a: a.get("date", ""), reverse=True)
+        last = rows[0]
+        name = (last.get("athlete_name") or last.get("name") or "").strip() or "Unknown"
+        line = f"- [{aid}] {name}"
+        counts = {a.get("date", ""): a.get("count", 0) for a in rows}
+        if semaines:
+            line += " | activities " + "/".join(str(counts.get(s, 0)) for s in semaines)
+        fitness, fatigue, form = (last.get(k) for k in ("fitness", "fatigue", "form"))
+        if fitness is not None:
+            line += f" | CTL {fitness:.0f}, ATL {fatigue or 0:.0f}, form {form or 0:+.0f}"
         lines.append(line)
 
     return "\n".join(lines)
